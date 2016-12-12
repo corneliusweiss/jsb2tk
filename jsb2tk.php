@@ -54,64 +54,6 @@
   *  toolkit is to configure the include and deploy strategy at a single point, without the need
   *  of furthor adoptions.
   * 
-  * Braindump:
-  *  0. jsbilder2 does not adopt pathes -> how the hell do the ext guys develp?
-  *  0. when concatting files either:
-  *  - resources must be copied so pathes stay valid, or
-  *  - pathes must be adopted
-  *  0. modules.js / vs all.js ->pathes might adopted also
-  *  0. with the knowlege of the build, ux pathes might be like
-  *   resouces/images/ux/someclass/img.jpg
-  *   this would avoid ns confilcts when copying
-  *   
-  *   - copying on deploy helps building server/client packages
-  *   
-  *  1. there are scenarios where a deploy isn't neccessary / is done dynamically (optionally cached)
-  *     In this cases the 'media' deploy is not nessecary, but adoption of pathes might be.
-  *  2. There might be multiple compressor backends valid. jsbuilder2 would just we one of them
-  *  3. The main thing to solve is the description of dependencies and dynamic builds resolving this
-  *     deps - with cache
-  *     
-  * TODO:
-  * - have jsb2file/pkg/fileinclude as seperate classes?
-  * - review basepath/url stuff -> htmlTagRoot
-  * - add pkg resolving capabilities
-  * -- include order? -> a dependency has to be included before the own code
-  * --- what about circular refs?
-  * - build include stack (current include)
-  * -- dep from this tree will be ignored
-  * 
-  * -- don't use jsbuilder2? or copy elsewhere
-  *  mhh, jsbilder2 resolves deps? BUT path rewriting must be done on source / pkg level
-  * 
-  * - register(jsb2file)
-  * - getHTML(packages) // allow regex
-  * - getJS(packages) // allow regexp
-  * - getCSS(packages) // allow regexp
-  * - getJSFiles(packages) // for documentor
-  * 
-  * EXAMPLES:
-  * $tk = new jsb2k(array(
-  *     'htmlTagRoot' => '../../' # Ebende des index
-  *     ...
-  * ));
-  * 
-  * foreach installed apps 
-  *   register jsb2file
-  *   
-  * // INDIVIDUAL
-  * $tk->getHTML(array( // numeric keys is no regexp!
-  *     'resources/css/ext-all.css',
-  *     'ext-all.js',
-  *     'some.+' => TRUE
-  * ));
-  * 
-  * $tk->getHTML('/.*-fatclient/', TRUE)
-  * 
-  * // get(JS|CSS)
-  * $tk->getJS('/.*-fatclient/', TRUE);
-  * $tk->getCSS('/.*-fatclient/', TRUE);
-  * 
   */
 class jsb2tk
 {
@@ -183,6 +125,11 @@ class jsb2tk
     protected $_htmlTagRoot = '../../';
     
     /**
+     * @var string homedir for the builds
+     */
+    protected $_homeDir = NULL;
+    
+    /**
      * @var array registered modules
      */
     protected $_registeredModuls = array();
@@ -190,13 +137,6 @@ class jsb2tk
     /**
      * constructs a new jsb2 toolkit object
      * 
-     * supported config options:
-     *   deploymode
-     *   includemode
-     *   jsb2bin
-     *   appendctime
-     *   htmlindention
-     *
      * @param  array $_config
      */
     public function __construct($_config = array())
@@ -206,7 +146,7 @@ class jsb2tk
             $this->$fn($value);
         }
         
-        if (! in_array('jsb2bin', $_config)) {
+        if (! array_key_exists('jsb2bin', $_config)) {
             $this->setJsb2bin(dirname(__FILE__) . "/{$this->_jsb2bin}");
         }
     }
@@ -220,6 +160,14 @@ class jsb2tk
     public static function getDefinition($_file)
     {
         $JSON = file_get_contents($_file);
+        $def = json_decode($JSON);
+        // json error checking for php >= 5.3.0
+        if (function_exists('json_last_error')) {
+            $jsonError = json_last_error();
+            if ($jsonError != JSON_ERROR_NONE) {
+                throw new Exception("could not parse file $_file" , $jsonError);
+            }
+        }
         return json_decode($JSON);
     }
     
@@ -247,6 +195,10 @@ class jsb2tk
                     break;
             }
             
+            //changed due to a IE bug that won't load more than 31 stylesheets with <link> tags
+            //implemented solution from http://john.albin.net/ie-css-limits/993-style-test.html
+            $last_what = '';
+            $css_count = 0;
             foreach($files as $file) {
                 if (! file_exists($file->path)) {
                     throw new Exception("required file {$file->path} is missing");
@@ -254,14 +206,30 @@ class jsb2tk
                 
                 $fileURL = $file->url . ($this->_appendctime ? '?' . filectime($file->path) : '');
                 
+                if ($what=='css' && $last_what!=$what) {
+                    $html .= $this->_HTMLIndent . "<style type='text/css' title='text/css' media='all'>\n";
+                }
+                else if ($last_what=='css' && $what=='js') {
+                    $html .= $this->_HTMLIndent . "</style>\n";
+                }
+                else if ($css_count >= 30) {
+                    $html .= $this->_HTMLIndent . "</style>\n";
+                    $html .= $this->_HTMLIndent . "<style type='text/css' title='text/css' media='all'>\n";;
+                    $css_count = 0;
+                }
                 switch ($what) {
                     case 'css':
-                        $html .= $this->_HTMLIndent . '<link rel="stylesheet" type="text/css" href="' . $fileURL . '" />' . "\n";
+                        $css_count = $css_count + 1;
+                        $html .= $this->_HTMLIndent . '@import url(' . $fileURL . ');' . "\n";
                         break;
                     case 'js':
                         $html .= $this->_HTMLIndent . '<script type="text/javascript" src="' . $fileURL . '"></script>' . "\n";
                         break;
                 }
+                $last_what = $what;
+            }
+            if ($last_what=='css') {
+                $html .= $this->_HTMLIndent . "</style>\n";
             }
         }
         
@@ -433,6 +401,53 @@ class jsb2tk
         return $this;
     }
     
+    /**
+     * relative (to this file) include root for script/link tags
+     * 
+     * @param  string $_tagRoot
+     * @return jsb2tk $this
+     */
+    public function setHtmlTagRoot($_tagRoot)
+    {
+        $this->_htmlTagRoot = (string) $_tagRoot;
+        return $this;
+    }
+    
+    /**
+     * set homedir for the builds
+     * 
+     * @param  string $_homeDir
+     * @return jsb2tk $this
+     */
+    public function setHomeDir($_homeDir)
+    {
+        if (! is_writable($_homeDir)) {
+            throw new Exception('homedir is not writeable');
+        }
+        
+        $this->_homeDir = $_homeDir;
+        return $this;
+    }
+    
+    /**
+     * gets homedir for builds
+     * 
+     * @return string
+     */
+    public function getHomeDir()
+    {
+        if (! $this->_homeDir) {
+            $homedir = sys_get_temp_dir() . '/jsb2tk';
+            if (! is_dir($homedir)) {
+                mkdir($homedir, 0600, TRUE);
+            }
+            
+            $this->setHomeDir($homedir);
+        }
+        
+        return $this->_homeDir;
+    }
+    
     public function buildAll()
     {
         foreach($this->getRegisteredModules() as $modul) {
@@ -442,7 +457,9 @@ class jsb2tk
     
     public function buildModul($_modul)
     {
-        `java -jar {$this->_jsb2bin} --projectFile {$_modul->jsb2file} --homeDir {$_modul->basePath}`;
+        // NOTE: it's a shame, that jsb2bin does not do the path rewrite!
+        //       as it interprets the jsb2 file it would be the ultimate instance to do so!
+        `java -jar "{$this->_jsb2bin}" --projectFile "{$_modul->jsb2file}" --homeDir "{$this->getHomeDir()}"`;
     }
     
     public function adoptPath()
