@@ -2,7 +2,7 @@
 /**
  * jsbuilder2 php toolkit
  *
- * Copyright (c) 2010, Metaways Infosystems GmbH
+ * Copyright (c) 2010-2011, Metaways Infosystems GmbH
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification, are permitted 
@@ -29,7 +29,7 @@
  *
  *
  * @author      Cornelius Weiss <c.weiss@metaways.de>
- * @copyright   Copyright (c) 2010 Metaways Infosystems GmbH (http://www.metaways.de)
+ * @copyright   Copyright (c) 2010-2011 Metaways Infosystems GmbH (http://www.metaways.de)
  */
  
  /**
@@ -45,13 +45,72 @@
   *  2. tell the IDE about classes/functions for documentation and code completion
   *  3. inlcude the files in the index html
   *  4. feed a javascipt dynamic code loader
-  *  as for the first two points jsbuilder can already be used, the idea is to also use the jsb2 definitions
+  *  
+  *  As for the first two points jsbuilder can already be used, the idea is to also use the jsb2 definitions
   *  for the latter two points.
   *
   *  Moreover there are several strategies how to include the js/css files in an index view which all
   *  have their spechial advantages/disadvantages in different scenarios. So the second target of this
   *  toolkit is to configure the include and deploy strategy at a single point, without the need
   *  of furthor adoptions.
+  * 
+  * Braindump:
+  *  0. jsbilder2 does not adopt pathes -> how the hell do the ext guys develp?
+  *  0. when concatting files either:
+  *  - resources must be copied so pathes stay valid, or
+  *  - pathes must be adopted
+  *  0. modules.js / vs all.js ->pathes might adopted also
+  *  0. with the knowlege of the build, ux pathes might be like
+  *   resouces/images/ux/someclass/img.jpg
+  *   this would avoid ns confilcts when copying
+  *   
+  *   - copying on deploy helps building server/client packages
+  *   
+  *  1. there are scenarios where a deploy isn't neccessary / is done dynamically (optionally cached)
+  *     In this cases the 'media' deploy is not nessecary, but adoption of pathes might be.
+  *  2. There might be multiple compressor backends valid. jsbuilder2 would just we one of them
+  *  3. The main thing to solve is the description of dependencies and dynamic builds resolving this
+  *     deps - with cache
+  *     
+  * TODO:
+  * - have jsb2file/pkg/fileinclude as seperate classes?
+  * - review basepath/url stuff -> htmlTagRoot
+  * - add pkg resolving capabilities
+  * -- include order? -> a dependency has to be included before the own code
+  * --- what about circular refs?
+  * - build include stack (current include)
+  * -- dep from this tree will be ignored
+  * 
+  * -- don't use jsbuilder2? or copy elsewhere
+  *  mhh, jsbilder2 resolves deps? BUT path rewriting must be done on source / pkg level
+  * 
+  * - register(jsb2file)
+  * - getHTML(packages) // allow regex
+  * - getJS(packages) // allow regexp
+  * - getCSS(packages) // allow regexp
+  * - getJSFiles(packages) // for documentor
+  * 
+  * EXAMPLES:
+  * $tk = new jsb2k(array(
+  *     'htmlTagRoot' => '../../' # Ebende des index
+  *     ...
+  * ));
+  * 
+  * foreach installed apps 
+  *   register jsb2file
+  *   
+  * // INDIVIDUAL
+  * $tk->getHTML(array( // numeric keys is no regexp!
+  *     'resources/css/ext-all.css',
+  *     'ext-all.js',
+  *     'some.+' => TRUE
+  * ));
+  * 
+  * $tk->getHTML('/.*-fatclient/', TRUE)
+  * 
+  * // get(JS|CSS)
+  * $tk->getJS('/.*-fatclient/', TRUE);
+  * $tk->getCSS('/.*-fatclient/', TRUE);
   * 
   */
 class jsb2tk
@@ -113,7 +172,16 @@ class jsb2tk
      * @var jsbuilder 2 binary
      */
     protected $_jsb2bin = '/JSBuilder2/JSBuilder2.jar';
-
+    
+    /**
+     * relative (to this file) include root for script/link tags
+     * 
+     * <script src="module/some.js" />
+     *             |      |---- location of jsb2 file with some.js include
+     *             |---- configured htmlTagRoot
+     */
+    protected $_htmlTagRoot = '../../';
+    
     /**
      * @var array registered modules
      */
@@ -375,6 +443,11 @@ class jsb2tk
     public function buildModul($_modul)
     {
         `java -jar {$this->_jsb2bin} --projectFile {$_modul->jsb2file} --homeDir {$_modul->basePath}`;
+    }
+    
+    public function adoptPath()
+    {
+        
     }
     
     /**

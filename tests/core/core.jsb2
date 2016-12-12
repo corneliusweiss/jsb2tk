@@ -22,5 +22,9 @@
             "path": "resources/css/"
        }]
     }],
-    "resources" : []
+    "resources" : [{
+        "src": "resources/",
+        "dest": "resources/",
+        "filters": ".*"
+    }]
 }
